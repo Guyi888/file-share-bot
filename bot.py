@@ -4,7 +4,7 @@ import random
 import string
 import sqlite3
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ConversationHandler, filters, ContextTypes
@@ -21,6 +21,26 @@ logger = logging.getLogger(__name__)
 
 # ── 对话状态 ──────────────────────────────────────────────────────────────────
 PERM_SELECT, PRICE_INPUT, CODE_INPUT, EXTRACT_INPUT, SEARCH_INPUT = range(5)
+
+# ── 底部常驻按钮文字 ───────────────────────────────────────────────────────────
+BTN_FIND     = "🔍 找文件"
+BTN_SEARCH   = "🔎 搜索文件"
+BTN_RECHARGE = "💰 充值"
+BTN_EXTRACT  = "📥 提取"
+BTN_FAVORITES= "❤️ 收藏箱"
+BTN_SETTINGS = "⚙️ 设置"
+
+def reply_keyboard():
+    """底部常驻菜单键盘"""
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton(BTN_FIND),     KeyboardButton(BTN_SEARCH)],
+            [KeyboardButton(BTN_RECHARGE), KeyboardButton(BTN_EXTRACT)],
+            [KeyboardButton(BTN_FAVORITES),KeyboardButton(BTN_SETTINGS)],
+        ],
+        resize_keyboard=True,
+        persistent=True,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -116,39 +136,31 @@ def count_user_files(user_id):
 # 主菜单
 # ════════════════════════════════════════════════════════════════════════════
 
-def main_menu_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔍 找文件", callback_data="find"),
-         InlineKeyboardButton("🔎 搜索文件", callback_data="search")],
-        [InlineKeyboardButton("💰 充值",   callback_data="recharge"),
-         InlineKeyboardButton("📥 提取",   callback_data="extract")],
-        [InlineKeyboardButton("❤️ 收藏箱", callback_data="favorites"),
-         InlineKeyboardButton("⚙️ 设置",   callback_data="settings")],
-    ])
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ensure_user(update.effective_user)
     user = get_user(update.effective_user.id)
     file_count = count_user_files(update.effective_user.id)
 
     text = (
-        f"👋 岁岁，欢迎使用文件储存助手！\n\n"
-        f"邀请码：`{update.effective_user.id}`\n"
-        f"用户名：@{user['username'] or '未设置'}\n"
-        f"粉丝余额：{user['balance']:.2f} U\n"
-        f"收入：{user['income']:.2f} U\n"
-        f"已分享：{file_count} 个文件\n\n"
+        f"👋 *岁岁，欢迎使用文件储存助手！*\n\n"
+        f"🔑 邀请码：`{update.effective_user.id}`\n"
+        f"👤 用户名：@{user['username'] or '未设置'}\n"
+        f"💰 粉丝余额：`{user['balance']:.2f} U`\n"
+        f"📈 收入：`{user['income']:.2f} U`\n"
+        f"📁 已分享：`{file_count}` 个文件\n\n"
         f"您可以直接发送文件，我会为您生成提取码。\n"
         f"支持设置文件权限：付费｜免费｜提取码\n"
         f"最大支持 4GB 文件。"
     )
     if update.message:
-        await update.message.reply_text(text, reply_markup=main_menu_keyboard(),
-                                        parse_mode="Markdown")
+        await update.message.reply_text(
+            text, parse_mode="Markdown", reply_markup=reply_keyboard()
+        )
     else:
-        await update.callback_query.edit_message_text(text, reply_markup=main_menu_keyboard(),
-                                                      parse_mode="Markdown")
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(
+            text, parse_mode="Markdown", reply_markup=reply_keyboard()
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -395,10 +407,11 @@ async def _send_file(update, context, file):
 
 async def extract_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """处理点击"提取"按钮"""
-    query = update.callback_query
-    await query.answer()
-    context.user_data["extract_mode"] = True
-    await query.edit_message_text("📥 请输入分享码或提取码：")
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text("📥 请输入分享码或提取码：")
+    else:
+        await update.message.reply_text("📥 请输入分享码或提取码：")
     return EXTRACT_INPUT
 
 
@@ -444,9 +457,11 @@ async def extract_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ════════════════════════════════════════════════════════════════════════════
 
 async def search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("🔎 请输入要搜索的文件名关键词：")
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text("🔎 请输入要搜索的文件名关键词：")
+    else:
+        await update.message.reply_text("🔎 请输入要搜索的文件名关键词：")
     return SEARCH_INPUT
 
 
@@ -624,12 +639,113 @@ async def back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# 底部按钮文字消息路由
+# ════════════════════════════════════════════════════════════════════════════
+
+async def menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """将底部键盘的文字按钮路由到对应功能"""
+    text = update.message.text
+    if text == BTN_FIND:
+        await find_text(update, context)
+    elif text == BTN_RECHARGE:
+        await recharge_text(update, context)
+    elif text == BTN_FAVORITES:
+        await favorites_text(update, context)
+    elif text == BTN_SETTINGS:
+        await settings_text(update, context)
+
+
+async def find_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    conn = db_connect()
+    rows = conn.execute(
+        "SELECT * FROM files WHERE owner_id=? ORDER BY upload_date DESC LIMIT 20", (uid,)
+    ).fetchall()
+    conn.close()
+    if not rows:
+        await update.message.reply_text(
+            "📂 您还没有上传任何文件。\n\n直接发送文件即可上传！",
+            reply_markup=reply_keyboard()
+        )
+        return
+    text = f"📂 *我的文件*（{len(rows)} 个）：\n\n"
+    for r in rows:
+        perm = {"free": "🆓", "paid": f"💰{r['price']}U", "code": "🔐"}.get(r["permission"], "")
+        text += f"{perm} {r['file_name']}\n`/get {r['share_id']}`  ⬇️{r['download_count']}次\n\n"
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_keyboard())
+
+
+async def recharge_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    await update.message.reply_text(
+        f"💰 *充值说明*\n\n"
+        f"请联系管理员进行充值。\n"
+        f"充值完成后余额会自动到账。\n\n"
+        f"您的 ID：`{update.effective_user.id}`\n"
+        f"当前余额：`{user['balance']:.2f} U`\n\n"
+        f"请将您的 ID 发给管理员。",
+        parse_mode="Markdown",
+        reply_markup=reply_keyboard()
+    )
+
+
+async def favorites_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    conn = db_connect()
+    rows = conn.execute("""
+        SELECT f.* FROM files f
+        JOIN favorites fav ON f.share_id=fav.share_id
+        WHERE fav.user_id=?
+    """, (uid,)).fetchall()
+    conn.close()
+    if not rows:
+        await update.message.reply_text(
+            "❤️ 收藏箱为空。\n\n下载文件后点击「收藏」即可保存。",
+            reply_markup=reply_keyboard()
+        )
+        return
+    text = f"❤️ *我的收藏*（{len(rows)} 个）：\n\n"
+    for r in rows:
+        perm = {"free": "🆓", "paid": "💰", "code": "🔐"}.get(r["permission"], "")
+        text += f"{perm} {r['file_name']}\n`/get {r['share_id']}`\n\n"
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_keyboard())
+
+
+async def settings_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = get_user(update.effective_user.id)
+    await update.message.reply_text(
+        f"⚙️ *账户设置*\n\n"
+        f"用户 ID：`{update.effective_user.id}`\n"
+        f"用户名：@{user['username'] or '未设置'}\n"
+        f"余额：`{user['balance']:.2f} U`\n"
+        f"累计收入：`{user['income']:.2f} U`\n"
+        f"注册日期：{user['join_date']}",
+        parse_mode="Markdown",
+        reply_markup=reply_keyboard()
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # 主程序
 # ════════════════════════════════════════════════════════════════════════════
 
+async def post_init(app):
+    """启动后设置 Bot 命令菜单"""
+    await app.bot.set_my_commands([
+        BotCommand("start",    "🏠 返回主页"),
+        BotCommand("get",      "📥 获取文件  /get <分享码>"),
+        BotCommand("recharge", "💰 管理员充值（仅管理员）"),
+    ])
+
+
 def main():
     db_init()
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+
+    # 底部按钮文字触发的过滤器
+    menu_filter = filters.Text([BTN_FIND, BTN_RECHARGE, BTN_FAVORITES, BTN_SETTINGS])
+    search_text_filter = filters.Text([BTN_SEARCH])
+    extract_text_filter = filters.Text([BTN_EXTRACT])
 
     # 文件上传对话
     upload_conv = ConversationHandler(
@@ -639,28 +755,34 @@ def main():
         )],
         states={
             PERM_SELECT: [CallbackQueryHandler(perm_selected, pattern="^perm_")],
-            PRICE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, price_input)],
-            CODE_INPUT:  [MessageHandler(filters.TEXT & ~filters.COMMAND, code_input)],
+            PRICE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_filter, price_input)],
+            CODE_INPUT:  [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_filter, code_input)],
         },
         fallbacks=[CommandHandler("start", start)],
         per_message=False,
     )
 
-    # 搜索对话
+    # 搜索对话（支持按钮和 callback）
     search_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(search_callback, pattern="^search$")],
+        entry_points=[
+            CallbackQueryHandler(search_callback, pattern="^search$"),
+            MessageHandler(search_text_filter, search_callback),
+        ],
         states={
-            SEARCH_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, search_input)],
+            SEARCH_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_filter, search_input)],
         },
         fallbacks=[CommandHandler("start", start)],
         per_message=False,
     )
 
-    # 提取对话
+    # 提取对话（支持按钮和 callback）
     extract_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(extract_callback, pattern="^extract$")],
+        entry_points=[
+            CallbackQueryHandler(extract_callback, pattern="^extract$"),
+            MessageHandler(extract_text_filter, extract_callback),
+        ],
         states={
-            EXTRACT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, extract_input)],
+            EXTRACT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~menu_filter, extract_input)],
         },
         fallbacks=[CommandHandler("start", start)],
         per_message=False,
@@ -672,6 +794,7 @@ def main():
     app.add_handler(upload_conv)
     app.add_handler(search_conv)
     app.add_handler(extract_conv)
+    app.add_handler(MessageHandler(menu_filter, menu_router))
     app.add_handler(CallbackQueryHandler(find_callback,      pattern="^find$"))
     app.add_handler(CallbackQueryHandler(recharge_callback,  pattern="^recharge$"))
     app.add_handler(CallbackQueryHandler(favorites_callback, pattern="^favorites$"))
