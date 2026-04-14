@@ -39,7 +39,7 @@ def reply_keyboard():
             [KeyboardButton(BTN_FAVORITES),KeyboardButton(BTN_SETTINGS)],
         ],
         resize_keyboard=True,
-        persistent=True,
+        is_persistent=True,
     )
 
 
@@ -475,14 +475,14 @@ async def search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if not rows:
-        await update.message.reply_text("😔 没有找到相关文件。", reply_markup=main_menu_keyboard())
+        await update.message.reply_text("😔 没有找到相关文件。", reply_markup=reply_keyboard())
         return ConversationHandler.END
 
     text = f"🔎 搜索「{keyword}」，共找到 {len(rows)} 个文件：\n\n"
     for r in rows:
         text += f"📁 {r['file_name']}\n`/get {r['share_id']}`\n⬇️ {r['download_count']} 次下载\n\n"
 
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=reply_keyboard())
     return ConversationHandler.END
 
 
